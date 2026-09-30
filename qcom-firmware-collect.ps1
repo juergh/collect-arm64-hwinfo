@@ -123,15 +123,19 @@ $harvestRules = @(
     },
     @{
         Subsystem    = "wifi"
-        Description  = "Qualcomm Wi-Fi Calibration & BDF"
+        Description  = "Qualcomm Wi-Fi Calibration & Firmware"
         InfPatterns  = @("qcathena*.inf_*", "qcwlan*.inf_*", "qcwcn*.inf_*", "ath*.inf_*")
-        TargetFiles  = @("board-2.bin", "board*.bin", "qcvid*.bin", "bdf*.bin", "m3.bin", "amss.bin")
+        TargetFiles  = @(
+            "board-2.bin", "board*.bin", "qcvid*.bin", "bdf*.bin",
+            "bdwlan*.elf", "bdwlan*.e*", "bdwlan*",
+            "wlanfw*.mbn", "wlanfw*.bin", "m3.bin", "amss.bin"
+        )
     },
     @{
         Subsystem    = "bluetooth"
         Description  = "Qualcomm Bluetooth NVM & Patches"
-        InfPatterns  = @("qcbthuart*.inf_*", "qcbt*.inf_*", "btqca*.inf_*")
-        TargetFiles  = @("rampatch*.bin", "nvm*.bin", "hpnv*.bin", "BTFW.mbn")
+        InfPatterns  = @("qcbthuart*.inf_*", "qcbt*.inf_*", "btqca*.inf_*", "qcbluetooth*.inf_*")
+        TargetFiles  = @("rampatch*.bin", "nvm*.bin", "hpnv*.bin", "BTFW.mbn", "clnbtnv*.bin", "bsrc_bt*.bin")
     }
 )
 
@@ -207,7 +211,51 @@ foreach ($rule in $harvestRules) {
 }
 
 # -----------------------------------------------------------------------------
-# 5. Generate Manifest File
+# 5. Active Wi-Fi Calibration Record
+# -----------------------------------------------------------------------------
+# Qualcomm FastConnect/Wi-Fi drivers record the specific board data (calibration)
+# file selected for this machine in the network adapter registry settings.
+$activeWifiInfo = @()
+$netClassPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}"
+if (Test-Path $netClassPath) {
+    Get-ChildItem -Path $netClassPath -ErrorAction SilentlyContinue | ForEach-Object {
+        $props = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+        if ($props -and ($props.DriverDesc -match 'Qualcomm|FastConnect|Wi-Fi|WLAN' -or $props.BDFileName)) {
+            $activeWifiInfo += [PSCustomObject]@{
+                DriverDesc = $props.DriverDesc
+                InfPath    = $props.InfPath
+                BDFileName = $props.BDFileName
+                FWFileName = $props.FWFileName
+            }
+        }
+    }
+}
+
+if ($activeWifiInfo.Count -gt 0) {
+    $activeWifiLog = Join-Path -Path $fwRoot -ChildPath "active-wifi-config.txt"
+    $wifiHeader = @"
+===============================================================================
+ACTIVE WINDOWS WI-FI DRIVER CONFIGURATION
+===============================================================================
+This file identifies the specific Qualcomm board data (calibration) and firmware
+binaries selected by Windows for this machine. On Linux (ath11k / ath12k), the
+matching bdwlan*.elf file should be used as the board calibration data.
+===============================================================================
+
+"@
+    $wifiLines = $activeWifiInfo | ForEach-Object {
+        "Network Adapter   : $($_.DriverDesc)"
+        "Active INF        : $($_.InfPath)"
+        "Active Board Data : $($_.BDFileName) (Calibration)"
+        "Active Firmware   : $($_.FWFileName)"
+        "-------------------------------------------------------------------------------"
+    }
+    ($wifiHeader + ($wifiLines -join "`n") + "`n") | Out-File -FilePath $activeWifiLog -Encoding utf8
+    Write-Host "[wifi] Recorded active Wi-Fi calibration: $(($activeWifiInfo | ForEach-Object { $_.BDFileName }) -join ', ')" -ForegroundColor Cyan
+}
+
+# -----------------------------------------------------------------------------
+# 6. Generate Manifest File
 # -----------------------------------------------------------------------------
 $manifestPath = Join-Path -Path $fwRoot -ChildPath "manifest.txt"
 
@@ -236,7 +284,7 @@ $manifestLines = $manifestEntries | ForEach-Object {
 Write-Host "`nManifest written to: $manifestPath" -ForegroundColor Green
 
 # -----------------------------------------------------------------------------
-# 6. Compress Output to Zip Archive
+# 7. Compress Output to Zip Archive
 # -----------------------------------------------------------------------------
 $zipOutFile = Join-Path -Path $OutputDir -ChildPath "${baseArchiveName}.zip"
 Write-Host "Creating zip archive: $zipOutFile..." -ForegroundColor Cyan
