@@ -94,8 +94,62 @@ Write-Host "Searching DriverStore: $driverStorePath" -ForegroundColor Gray
 Write-Host "Output Directory      : $targetDir`n" -ForegroundColor Gray
 
 # -----------------------------------------------------------------------------
-# 3. Harvest Definitions
+# 3. Harvest Definitions & Active Wi-Fi Discovery
 # -----------------------------------------------------------------------------
+# Query active Qualcomm Wi-Fi adapter settings from the registry to target the
+# exact board calibration file and firmware image selected for this machine.
+$activeWifiInfo = @()
+$netClassPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}"
+if (Test-Path $netClassPath) {
+    Get-ChildItem -Path $netClassPath -ErrorAction SilentlyContinue | ForEach-Object {
+        $props = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+        if ($props -and ($props.DriverDesc -match 'Qualcomm|FastConnect|Wi-Fi|WLAN' -or $props.BDFileName)) {
+            # Extract PCI IDs from MatchingDeviceId or DeviceInstanceID if present
+            $pciMatch = [regex]::Match($props.MatchingDeviceId, 'VEN_([0-9A-Fa-f]{4})&DEV_([0-9A-Fa-f]{4})(?:&SUBSYS_([0-9A-Fa-f]{4})([0-9A-Fa-f]{4}))?')
+            $pciIds = if ($pciMatch.Success) {
+                [pscustomobject][ordered]@{
+                    vendor_id           = "0x$($pciMatch.Groups[1].Value.ToLower())"
+                    device_id           = "0x$($pciMatch.Groups[2].Value.ToLower())"
+                    subsystem_vendor_id = if ($pciMatch.Groups[4].Success) { "0x$($pciMatch.Groups[4].Value.ToLower())" } else { $null }
+                    subsystem_device_id = if ($pciMatch.Groups[3].Success) { "0x$($pciMatch.Groups[3].Value.ToLower())" } else { $null }
+                }
+            } else { $null }
+
+            $activeWifiInfo += [pscustomobject][ordered]@{
+                DriverDesc    = $props.DriverDesc
+                InfPath       = $props.InfPath
+                InfSection    = $props.InfSection
+                BoardDataFile = $props.BDFileName
+                FirmwareFile  = $props.FWFileName
+                PciIds        = $pciIds
+            }
+        }
+    }
+}
+
+# Determine Wi-Fi target files: prioritize the specific active board data file
+$wifiTargets = @("board-2.bin", "board*.bin", "m3.bin", "amss.bin")
+$activeBoardFiles = @($activeWifiInfo | Where-Object { $_.BoardDataFile } | ForEach-Object { $_.BoardDataFile })
+$activeFwFiles    = @($activeWifiInfo | Where-Object { $_.FirmwareFile } | ForEach-Object { $_.FirmwareFile })
+
+if ($activeBoardFiles.Count -gt 0) {
+    $wifiTargets += $activeBoardFiles
+} else {
+    # Fallback to general patterns only if active file name was not discovered
+    $wifiTargets += @("bdwlan*.elf", "bdwlan*.e*", "bdf*.bin")
+}
+
+if ($activeFwFiles.Count -gt 0) {
+    $wifiTargets += $activeFwFiles
+    # DriverStore often names the matching file with version suffix, e.g. wlanfw20.mbn
+    foreach ($fw in $activeFwFiles) {
+        $baseFw = [System.IO.Path]::GetFileNameWithoutExtension($fw)
+        $wifiTargets += "${baseFw}*.mbn"
+    }
+} else {
+    $wifiTargets += @("wlanfw*.mbn", "wlanfw*.bin")
+}
+
 $harvestRules = @(
     @{
         Subsystem    = "adsp"
@@ -125,17 +179,13 @@ $harvestRules = @(
         Subsystem    = "wifi"
         Description  = "Qualcomm Wi-Fi Calibration & Firmware"
         InfPatterns  = @("qcathena*.inf_*", "qcwlan*.inf_*", "qcwcn*.inf_*", "ath*.inf_*")
-        TargetFiles  = @(
-            "board-2.bin", "board*.bin", "qcvid*.bin", "bdf*.bin",
-            "bdwlan*.elf", "bdwlan*.e*", "bdwlan*",
-            "wlanfw*.mbn", "wlanfw*.bin", "m3.bin", "amss.bin"
-        )
+        TargetFiles  = ($wifiTargets | Select-Object -Unique)
     },
     @{
         Subsystem    = "bluetooth"
-        Description  = "Qualcomm Bluetooth NVM & Patches"
+        Description  = "Qualcomm Bluetooth Firmware & NVM"
         InfPatterns  = @("qcbthuart*.inf_*", "qcbt*.inf_*", "btqca*.inf_*", "qcbluetooth*.inf_*")
-        TargetFiles  = @("rampatch*.bin", "nvm*.bin", "hpnv*.bin", "BTFW.mbn", "clnbtnv*.bin", "bsrc_bt*.bin")
+        TargetFiles  = @("*btfw*.tlv", "*btfw*.ver", "*nv*.bin", "*nv*.b*", "bsrc_bt*.bin", "hpnv*.bin", "BTFW.mbn")
     }
 )
 
@@ -212,32 +262,7 @@ foreach ($rule in $harvestRules) {
 }
 
 # -----------------------------------------------------------------------------
-# 5. Active Wi-Fi Calibration Record
-# -----------------------------------------------------------------------------
-# Qualcomm FastConnect/Wi-Fi drivers record the specific board data (calibration)
-# file selected for this machine in the network adapter registry settings.
-$activeWifiInfo = @()
-$netClassPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}"
-if (Test-Path $netClassPath) {
-    Get-ChildItem -Path $netClassPath -ErrorAction SilentlyContinue | ForEach-Object {
-        $props = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
-        if ($props -and ($props.DriverDesc -match 'Qualcomm|FastConnect|Wi-Fi|WLAN' -or $props.BDFileName)) {
-            $activeWifiInfo += [pscustomobject][ordered]@{
-                DriverDesc    = $props.DriverDesc
-                InfPath       = $props.InfPath
-                BoardDataFile = $props.BDFileName
-                FirmwareFile  = $props.FWFileName
-            }
-        }
-    }
-}
-
-if ($activeWifiInfo.Count -gt 0) {
-    Write-Host "[wifi] Active Wi-Fi calibration: $(($activeWifiInfo | ForEach-Object { $_.BoardDataFile }) -join ', ')" -ForegroundColor Cyan
-}
-
-# -----------------------------------------------------------------------------
-# 6. Generate Manifest File
+# 5. Generate Manifest File
 # -----------------------------------------------------------------------------
 $manifestPath = Join-Path -Path $fwRoot -ChildPath "manifest.json"
 
@@ -272,8 +297,11 @@ $manifestData = [ordered]@{
             [pscustomobject][ordered]@{
                 driver_desc     = $_.DriverDesc
                 inf_path        = $_.InfPath
+                inf_section     = $_.InfSection
                 board_data_file = $_.BoardDataFile
                 firmware_file   = $_.FirmwareFile
+                pci_ids         = $_.PciIds
+                linux_notes     = "Match board_data_file to the hardware OTP qmi-board-id reported in dmesg by ath12k/ath11k"
             }
         })
     }
@@ -284,7 +312,7 @@ $manifestData | ConvertTo-Json -Depth 6 | Set-Content -Path $manifestPath -Encod
 Write-Host "`nManifest written to: $manifestPath" -ForegroundColor Green
 
 # -----------------------------------------------------------------------------
-# 7. Compress Output to Zip Archive
+# 6. Compress Output to Zip Archive
 # -----------------------------------------------------------------------------
 $zipOutFile = Join-Path -Path $OutputDir -ChildPath "${baseArchiveName}.zip"
 Write-Host "Creating zip archive: $zipOutFile..." -ForegroundColor Cyan
