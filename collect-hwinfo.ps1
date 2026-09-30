@@ -126,7 +126,7 @@ New-Item -ItemType Directory -Path $edidDir -Force | Out-Null
 New-Item -ItemType Directory -Path $acpiRegDir -Force | Out-Null
 New-Item -ItemType Directory -Path $acpiApiDir -Force | Out-Null
 
-function Query-SafeCim([string]$Namespace, [string]$ClassName, [string[]]$AllowList) {
+function Get-SafeCimRecord([string]$Namespace, [string]$ClassName, [string[]]$AllowList) {
     try {
         $instances = if ($Namespace) {
             @(Get-CimInstance -Namespace $Namespace -ClassName $ClassName -ErrorAction Stop)
@@ -175,22 +175,22 @@ $inventory = [ordered]@{
     }
     sources = [ordered]@{
         "root/cimv2" = [ordered]@{
-            "Win32_ComputerSystem" = Query-SafeCim -Namespace "" -ClassName "Win32_ComputerSystem" -AllowList @(
+            "Win32_ComputerSystem" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_ComputerSystem" -AllowList @(
                 "Manufacturer", "Model", "SystemFamily", "TotalPhysicalMemory"
             )
-            "Win32_ComputerSystemProduct" = Query-SafeCim -Namespace "" -ClassName "Win32_ComputerSystemProduct" -AllowList @(
+            "Win32_ComputerSystemProduct" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_ComputerSystemProduct" -AllowList @(
                 "Version", "SKUNumber"
             )
-            "Win32_BaseBoard" = Query-SafeCim -Namespace "" -ClassName "Win32_BaseBoard" -AllowList @(
+            "Win32_BaseBoard" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_BaseBoard" -AllowList @(
                 "Manufacturer", "Product", "Version"
             )
-            "Win32_SystemEnclosure" = Query-SafeCim -Namespace "" -ClassName "Win32_SystemEnclosure" -AllowList @(
+            "Win32_SystemEnclosure" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_SystemEnclosure" -AllowList @(
                 "ChassisTypes"
             )
-            "Win32_Processor" = Query-SafeCim -Namespace "" -ClassName "Win32_Processor" -AllowList @(
+            "Win32_Processor" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_Processor" -AllowList @(
                 "Name", "NumberOfCores", "NumberOfLogicalProcessors", "MaxClockSpeed"
             )
-            "Win32_BIOS" = Query-SafeCim -Namespace "" -ClassName "Win32_BIOS" -AllowList @(
+            "Win32_BIOS" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_BIOS" -AllowList @(
                 "Manufacturer", "SMBIOSBIOSVersion", "SystemBiosMajorVersion", "SystemBiosMinorVersion", "ReleaseDate"
             )
         }
@@ -314,7 +314,7 @@ $inventory.sources.pnp["pci_properties"] = [ordered]@{ status = "ok"; records = 
 Write-Host "[3/4] Querying Display EDID & Battery Parameters..." -ForegroundColor Green
 
 # 5a. Monitors & Raw EDID binaries
-$monitorQuery = Query-SafeCim -Namespace "root\wmi" -ClassName "WmiMonitorID" -AllowList @(
+$monitorQuery = Get-SafeCimRecord -Namespace "root\wmi" -ClassName "WmiMonitorID" -AllowList @(
     "Active", "InstanceName", "ManufacturerName", "ProductCodeID", "UserFriendlyName"
 )
 $inventory.sources["root/wmi"]["WmiMonitorID"] = $monitorQuery
@@ -356,22 +356,22 @@ $inventory.artifacts.edid = $edidArtifacts
 
 # 5b. Safe Battery Records (root/cimv2 and root/wmi)
 # Explicitly OMIT SerialNumber, UniqueID, and DeviceID which contain hardware serials.
-$inventory.sources["root/cimv2"]["Win32_Battery"] = Query-SafeCim -Namespace "" -ClassName "Win32_Battery" -AllowList @(
+$inventory.sources["root/cimv2"]["Win32_Battery"] = Get-SafeCimRecord -Namespace "" -ClassName "Win32_Battery" -AllowList @(
     "Name", "Status", "Availability", "BatteryStatus", "Chemistry", "DesignCapacity", "FullChargeCapacity", "DesignVoltage"
 )
-$inventory.sources["root/cimv2"]["Win32_PortableBattery"] = Query-SafeCim -Namespace "" -ClassName "Win32_PortableBattery" -AllowList @(
+$inventory.sources["root/cimv2"]["Win32_PortableBattery"] = Get-SafeCimRecord -Namespace "" -ClassName "Win32_PortableBattery" -AllowList @(
     "Manufacturer", "Chemistry", "DesignCapacity", "DesignVoltage", "Location"
 )
-$inventory.sources["root/wmi"]["BatteryStaticData"] = Query-SafeCim -Namespace "root\wmi" -ClassName "BatteryStaticData" -AllowList @(
+$inventory.sources["root/wmi"]["BatteryStaticData"] = Get-SafeCimRecord -Namespace "root\wmi" -ClassName "BatteryStaticData" -AllowList @(
     "InstanceName", "Active", "Chemistry", "DesignedCapacity", "DeviceName", "ManufactureName", "Technology", "Capabilities"
 )
-$inventory.sources["root/wmi"]["BatteryFullChargedCapacity"] = Query-SafeCim -Namespace "root\wmi" -ClassName "BatteryFullChargedCapacity" -AllowList @(
+$inventory.sources["root/wmi"]["BatteryFullChargedCapacity"] = Get-SafeCimRecord -Namespace "root\wmi" -ClassName "BatteryFullChargedCapacity" -AllowList @(
     "InstanceName", "Active", "FullChargedCapacity", "Tag"
 )
-$inventory.sources["root/wmi"]["BatteryStatus"] = Query-SafeCim -Namespace "root\wmi" -ClassName "BatteryStatus" -AllowList @(
+$inventory.sources["root/wmi"]["BatteryStatus"] = Get-SafeCimRecord -Namespace "root\wmi" -ClassName "BatteryStatus" -AllowList @(
     "InstanceName", "Active", "Charging", "Discharging", "Critical", "PowerOnline", "RemainingCapacity", "Voltage", "Tag"
 )
-$inventory.sources["root/wmi"]["BatteryCycleCount"] = Query-SafeCim -Namespace "root\wmi" -ClassName "BatteryCycleCount" -AllowList @(
+$inventory.sources["root/wmi"]["BatteryCycleCount"] = Get-SafeCimRecord -Namespace "root\wmi" -ClassName "BatteryCycleCount" -AllowList @(
     "InstanceName", "Active", "CycleCount", "Tag"
 )
 
