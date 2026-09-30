@@ -165,12 +165,21 @@ class HwInfoParser:
 
         if self.target_path.is_file() and zipfile.is_zipfile(self.target_path):
             self.temp_dir = tempfile.mkdtemp(prefix="hwinfo_parse_")
+            temp_root = os.path.realpath(self.temp_dir)
             with zipfile.ZipFile(self.target_path, "r") as z:
                 for member in z.infolist():
+                    # Archives created on Windows (e.g. by Compress-Archive) use backslashes.
+                    # Normalize separators so files and directories are extracted properly on POSIX.
+                    norm_name = member.filename.replace("\\", "/")
+                    if not norm_name or norm_name == "/":
+                        continue
+                    member.filename = norm_name
                     target = os.path.realpath(os.path.join(self.temp_dir, member.filename))
-                    if not target.startswith(os.path.realpath(self.temp_dir) + os.sep):
+                    if target != temp_root and not target.startswith(temp_root + os.sep):
                         raise RuntimeError(f"Zip slip attempt detected in archive: {member.filename}")
-                z.extractall(self.temp_dir)
+                    if target == temp_root:
+                        continue
+                    z.extract(member, self.temp_dir)
             self.work_dir = Path(self.temp_dir)
         elif self.target_path.is_dir():
             self.work_dir = self.target_path
@@ -190,7 +199,7 @@ class HwInfoParser:
         inv_path = self.work_dir / "inventory.json"
         if not inv_path.is_file():
             # Search recursively in case the zip had a wrapper directory
-            found = list(self.work_dir.glob("**/inventory.json"))
+            found = sorted(self.work_dir.glob("**/inventory.json"))
             if found:
                 inv_path = found[0]
                 self.work_dir = inv_path.parent
@@ -216,6 +225,7 @@ class HwInfoParser:
     def _file_path(self, rel_path):
         if not rel_path:
             return None
+        rel_path = str(rel_path).replace("\\", "/")
         candidate = self.work_dir / rel_path
         if candidate.is_file():
             return candidate
