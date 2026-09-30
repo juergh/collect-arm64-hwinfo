@@ -53,7 +53,7 @@ CHID_DEFINITIONS = (
         "Manufacturer + Family + BaseboardManufacturer + BaseboardProduct",
     ),
     (11, ("Manufacturer", "Family"), "Manufacturer + Family"),
-    (11, ("Manufacturer", "EnclosureKind"), "Manufacturer + EnclosureKind"),
+    (12, ("Manufacturer", "EnclosureKind"), "Manufacturer + EnclosureKind"),
     (
         13,
         ("Manufacturer", "BaseboardManufacturer", "BaseboardProduct"),
