@@ -529,7 +529,23 @@ $zipOutFile = Join-Path -Path $OutputDir -ChildPath "${dumpFolderName}.zip"
 Write-Host "Creating archive: $zipOutFile..." -ForegroundColor Cyan
 
 try {
-    Compress-Archive -Path "$targetDir\*" -DestinationPath $zipOutFile -Force
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    if (Test-Path -LiteralPath $zipOutFile) {
+        Remove-Item -LiteralPath $zipOutFile -Force
+    }
+    $zip = [System.IO.Compression.ZipFile]::Open($zipOutFile, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        $sourceBase = (Get-Item -LiteralPath $targetDir).FullName
+        $baseLen = $sourceBase.Length
+        foreach ($file in (Get-ChildItem -LiteralPath $sourceBase -Recurse -File)) {
+            $relPath = $file.FullName.Substring($baseLen).TrimStart('\', '/') -replace '\\', '/'
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $zip, $file.FullName, $relPath, [System.IO.Compression.CompressionLevel]::Optimal
+            ) | Out-Null
+        }
+    } finally {
+        $zip.Dispose()
+    }
     Write-Host "================================================================================" -ForegroundColor Green
     Write-Host "  EXTRACTION COMPLETE!" -ForegroundColor Green
     Write-Host "  Zip Archive : $zipOutFile" -ForegroundColor Green
