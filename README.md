@@ -22,14 +22,15 @@ An archive named `hwinfo-<Manufacturer>-<Model>-<Timestamp>.zip` is generated.
 ### Hardware Archive Contents
 ```text
 hwinfo-<Manufacturer>-<Model>-<Timestamp>.zip
-├── inventory.json         # Raw structured metadata from CIM/WMI/PnP
-├── edid/
-│   └── edid-<n>.bin       # Raw unmodified monitor EDID binaries
-└── acpi/
-    ├── registry/          # ACPI tables from Windows registry cache (includes DSDT)
-    │   └── *.dat
-    └── firmware-api/      # ACPI tables from Win32 firmware table API
-        └── *.dat
+└── hwinfo/
+    ├── inventory.json     # Raw structured metadata from CIM/WMI/PnP
+    ├── edid/
+    │   └── edid-<n>.bin   # Raw unmodified monitor EDID binaries
+    └── acpi/
+        ├── registry/      # ACPI tables from Windows registry cache (includes DSDT)
+        │   └── *.dat
+        └── firmware-api/  # ACPI tables from Win32 firmware table API
+            └── *.dat
 ```
 
 ### Privacy Safeguards

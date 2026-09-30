@@ -117,11 +117,12 @@ if ([string]::IsNullOrWhiteSpace($modelSanitized)) { $modelSanitized = "UnknownM
 
 $dumpFolderName = "hwinfo-${mfgSanitized}-${modelSanitized}-${timestamp}"
 $targetDir = Join-Path -Path $OutputDir -ChildPath $dumpFolderName
-$edidDir = Join-Path -Path $targetDir -ChildPath "edid"
-$acpiRegDir = Join-Path -Path $targetDir -ChildPath "acpi\registry"
-$acpiApiDir = Join-Path -Path $targetDir -ChildPath "acpi\firmware-api"
+$hwRoot = Join-Path -Path $targetDir -ChildPath "hwinfo"
+$edidDir = Join-Path -Path $hwRoot -ChildPath "edid"
+$acpiRegDir = Join-Path -Path $hwRoot -ChildPath "acpi\registry"
+$acpiApiDir = Join-Path -Path $hwRoot -ChildPath "acpi\firmware-api"
 
-New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+New-Item -ItemType Directory -Path $hwRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $edidDir -Force | Out-Null
 New-Item -ItemType Directory -Path $acpiRegDir -Force | Out-Null
 New-Item -ItemType Directory -Path $acpiApiDir -Force | Out-Null
@@ -521,7 +522,7 @@ Write-Host "  Saved $regCount registry ACPI table(s) and $apiCount firmware-API 
 # -----------------------------------------------------------------------------
 # 7. Write inventory.json & Create Zip Archive
 # -----------------------------------------------------------------------------
-$inventoryJsonPath = Join-Path -Path $targetDir -ChildPath "inventory.json"
+$inventoryJsonPath = Join-Path -Path $hwRoot -ChildPath "inventory.json"
 $inventory | ConvertTo-Json -Depth 10 | Set-Content -Path $inventoryJsonPath -Encoding UTF8
 
 $zipOutFile = Join-Path -Path $OutputDir -ChildPath "${dumpFolderName}.zip"
