@@ -123,6 +123,14 @@ powershell.exe -ExecutionPolicy Bypass -File .\qcom-firmware-collect.ps1
 The script prompts for acknowledgement of the legal warning, scans `C:\Windows\System32\DriverStore\FileRepository`, and packages matching firmware into:
 ```text
 qcom-firmware-<Manufacturer>-<Model>-<Timestamp>.zip
+└── qcom-firmware/
+    ├── manifest.json      # Structured metadata, checksums & active Wi-Fi calibration
+    ├── adsp/              # qcadsp8380.mbn, adsp_dtbs.elf, JSON configs
+    ├── cdsp/              # qccdsp8380.mbn, cdsp_dtbs.elf, JSON configs
+    ├── gpu/               # qcdxkmsuc8380.mbn, qcdxkmsucpurwa.mbn, *zap*.mbn
+    ├── video/             # qcvss8380.mbn
+    ├── wifi/              # bdwlan*.elf calibration, wlanfw*.mbn, m3.bin
+    └── bluetooth/         # rampatch, NVM binaries, BTFW.mbn
 ```
 
 ---

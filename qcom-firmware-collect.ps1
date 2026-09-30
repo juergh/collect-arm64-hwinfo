@@ -193,12 +193,13 @@ foreach ($rule in $harvestRules) {
 
         Write-Host "  -> Copied: $($srcFile.Name) ($([math]::Round($sizeBytes / 1KB, 1)) KB)" -ForegroundColor Gray
 
-        $manifestEntries += [PSCustomObject]@{
-            Subsystem = $subsystemName
-            FileName  = $srcFile.Name
-            SizeBytes = $sizeBytes
-            SHA256    = $sha256
-            SourceDir = $srcFile.Directory.Name
+        $manifestEntries += [pscustomobject][ordered]@{
+            Subsystem    = $subsystemName
+            FileName     = $srcFile.Name
+            RelativePath = "$subsystemName/$($srcFile.Name)"
+            SizeBytes    = $sizeBytes
+            SHA256       = $sha256
+            SourceDir    = $srcFile.Directory.Name
         }
 
         $collectedForSubsystem++
@@ -221,66 +222,65 @@ if (Test-Path $netClassPath) {
     Get-ChildItem -Path $netClassPath -ErrorAction SilentlyContinue | ForEach-Object {
         $props = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
         if ($props -and ($props.DriverDesc -match 'Qualcomm|FastConnect|Wi-Fi|WLAN' -or $props.BDFileName)) {
-            $activeWifiInfo += [PSCustomObject]@{
-                DriverDesc = $props.DriverDesc
-                InfPath    = $props.InfPath
-                BDFileName = $props.BDFileName
-                FWFileName = $props.FWFileName
+            $activeWifiInfo += [pscustomobject][ordered]@{
+                DriverDesc    = $props.DriverDesc
+                InfPath       = $props.InfPath
+                BoardDataFile = $props.BDFileName
+                FirmwareFile  = $props.FWFileName
             }
         }
     }
 }
 
 if ($activeWifiInfo.Count -gt 0) {
-    $activeWifiLog = Join-Path -Path $fwRoot -ChildPath "active-wifi-config.txt"
-    $wifiHeader = @"
-===============================================================================
-ACTIVE WINDOWS WI-FI DRIVER CONFIGURATION
-===============================================================================
-This file identifies the specific Qualcomm board data (calibration) and firmware
-binaries selected by Windows for this machine. On Linux (ath11k / ath12k), the
-matching bdwlan*.elf file should be used as the board calibration data.
-===============================================================================
-
-"@
-    $wifiLines = $activeWifiInfo | ForEach-Object {
-        "Network Adapter   : $($_.DriverDesc)"
-        "Active INF        : $($_.InfPath)"
-        "Active Board Data : $($_.BDFileName) (Calibration)"
-        "Active Firmware   : $($_.FWFileName)"
-        "-------------------------------------------------------------------------------"
-    }
-    ($wifiHeader + ($wifiLines -join "`n") + "`n") | Out-File -FilePath $activeWifiLog -Encoding utf8
-    Write-Host "[wifi] Recorded active Wi-Fi calibration: $(($activeWifiInfo | ForEach-Object { $_.BDFileName }) -join ', ')" -ForegroundColor Cyan
+    Write-Host "[wifi] Active Wi-Fi calibration: $(($activeWifiInfo | ForEach-Object { $_.BoardDataFile }) -join ', ')" -ForegroundColor Cyan
 }
 
 # -----------------------------------------------------------------------------
 # 6. Generate Manifest File
 # -----------------------------------------------------------------------------
-$manifestPath = Join-Path -Path $fwRoot -ChildPath "manifest.txt"
+$manifestPath = Join-Path -Path $fwRoot -ChildPath "manifest.json"
 
-$manifestHeader = @"
-===============================================================================
-QUALCOMM SNAPDRAGON X FIRMWARE HARVEST MANIFEST
-===============================================================================
-Machine Model     : $($sysInfo.Manufacturer) $($sysInfo.Model)
-Capture Timestamp : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-Total Files Found : $totalCollected
-===============================================================================
-NOTE: This manifest details proprietary firmware extracted for local Linux
-enablement. These binaries are not licensed for public redistribution.
-===============================================================================
-
-Subsystem    | File Name                                | Size (Bytes) | SHA256 Checksum
--------------+------------------------------------------+--------------+-----------------------------------------------------------------
-"@
-
-$manifestLines = $manifestEntries | ForEach-Object {
-    "{0,-12} | {1,-40} | {2,12} | {3}" -f $_.Subsystem, $_.FileName, $_.SizeBytes, $_.SHA256
+$subsystemsObj = [ordered]@{}
+foreach ($rule in $harvestRules) {
+    $subsystemsObj[$rule.Subsystem] = @()
+}
+foreach ($entry in $manifestEntries) {
+    $subsystemsObj[$entry.Subsystem] += [pscustomobject][ordered]@{
+        file_name      = $entry.FileName
+        relative_path  = $entry.RelativePath
+        size_bytes     = $entry.SizeBytes
+        sha256         = $entry.SHA256
+        source_inf_dir = $entry.SourceDir
+    }
 }
 
-($manifestHeader + "`n" + ($manifestLines -join "`n")) | Out-File -FilePath $manifestPath -Encoding utf8
+$manifestData = [ordered]@{
+    schema_version        = 1
+    archive_type          = "qcom-firmware"
+    capture               = [ordered]@{
+        timestamp   = (Get-Date).ToString("o")
+        collector   = "qcom-firmware-collect.ps1"
+        total_files = $totalCollected
+    }
+    system                = [ordered]@{
+        manufacturer = $sysInfo.Manufacturer
+        model        = $sysInfo.Model
+    }
+    active_configurations = [ordered]@{
+        wifi = @($activeWifiInfo | ForEach-Object {
+            [pscustomobject][ordered]@{
+                driver_desc     = $_.DriverDesc
+                inf_path        = $_.InfPath
+                board_data_file = $_.BoardDataFile
+                firmware_file   = $_.FirmwareFile
+            }
+        })
+    }
+    subsystems            = $subsystemsObj
+}
 
+$manifestData | ConvertTo-Json -Depth 6 | Set-Content -Path $manifestPath -Encoding UTF8
 Write-Host "`nManifest written to: $manifestPath" -ForegroundColor Green
 
 # -----------------------------------------------------------------------------
