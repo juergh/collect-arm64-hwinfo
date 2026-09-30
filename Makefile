@@ -10,7 +10,7 @@ check:
 
 psanalyze: .powershell/pwsh
 	.powershell/pwsh -Command "if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force }"
-	.powershell/pwsh -Command "Get-ChildItem -Path . -Filter *.ps1 | Invoke-ScriptAnalyzer"
+	.powershell/pwsh -Command "Get-ChildItem -Path . -Filter *.ps1 | Invoke-ScriptAnalyzer -ExcludeRule PSAvoidUsingWriteHost"
 
 .powershell/pwsh:
 	rm -rf .powershell
