@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "collect-arm64-hwinfo"
+version = "0.1.0"
+description = "Parse Windows hardware archives for Linux Devicetree enablement"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "GPL-2.0-only"
+authors = [
+    { name = "Juerg Haefliger", email = "juergh@proton.me" },
+]
+dependencies = []
+
+[project.scripts]
+parse-hwinfo = "parse_hwinfo:main"
+
+[tool.setuptools]
+py-modules = ["parse_hwinfo"]
+
+# These dependencies are native tools or data files and cannot be installed by uv.
+[tool.collect-arm64-hwinfo.external-dependencies]
+edid-decode = { command = "edid-decode", debian-package = "edid-decode", purpose = "Decode preferred display timings" }
+iasl = { command = "iasl", debian-package = "acpica-tools", purpose = "Generate ACPI DSL and hardware map files" }
+pci-ids = { file = "pci.ids", debian-package = "pci.ids", purpose = "Resolve canonical PCI vendor and device names", optional = true }
+usb-ids = { file = "usb.ids", debian-package = "usb.ids", purpose = "Resolve canonical USB vendor and product names", optional = true }
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
