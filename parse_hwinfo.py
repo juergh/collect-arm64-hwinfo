@@ -257,20 +257,64 @@ class HwInfoParser:
         src = "inventory.json:Win32_*"
 
         self.facts["system"] = {
-            "manufacturer": {"value": mfg_str, "source": src, "status": "observed" if cs.get("Manufacturer") else "unknown"},
+            "manufacturer": {
+                "value": mfg_str,
+                "source": src,
+                "status": "observed" if cs.get("Manufacturer") else "unknown",
+            },
             "model": {"value": model_str, "source": src, "status": "observed" if cs.get("Model") else "unknown"},
             "product_name": {"value": raw_model, "source": src, "status": "observed" if cs.get("Model") else "unknown"},
-            "family": {"value": cs.get("SystemFamily") or "Unknown", "source": src, "status": "observed" if cs.get("SystemFamily") else "unknown"},
-            "sku": {"value": csp.get("SKUNumber"), "source": src, "status": "observed" if csp.get("SKUNumber") else "unknown"},
-            "system_version": {"value": csp.get("Version"), "source": src, "status": "observed" if csp.get("Version") else "unknown"},
+            "family": {
+                "value": cs.get("SystemFamily") or "Unknown",
+                "source": src,
+                "status": "observed" if cs.get("SystemFamily") else "unknown",
+            },
+            "sku": {
+                "value": csp.get("SKUNumber"),
+                "source": src,
+                "status": "observed" if csp.get("SKUNumber") else "unknown",
+            },
+            "system_version": {
+                "value": csp.get("Version"),
+                "source": src,
+                "status": "observed" if csp.get("Version") else "unknown",
+            },
             "chassis_type": {"value": chassis_str, "source": src, "status": "observed" if chassis_str else "unknown"},
-            "baseboard_manufacturer": {"value": bb.get("Manufacturer"), "source": src, "status": "observed" if bb.get("Manufacturer") else "unknown"},
-            "baseboard_product": {"value": bb.get("Product"), "source": src, "status": "observed" if bb.get("Product") else "unknown"},
-            "baseboard_version": {"value": bb.get("Version"), "source": src, "status": "observed" if bb.get("Version") else "unknown"},
-            "bios_manufacturer": {"value": bios.get("Manufacturer"), "source": src, "status": "observed" if bios.get("Manufacturer") else "unknown"},
-            "bios_version": {"value": bios.get("SMBIOSBIOSVersion") or "Unknown", "source": src, "status": "observed" if bios.get("SMBIOSBIOSVersion") else "unknown"},
-            "bios_major_release": {"value": bios.get("SystemBiosMajorVersion"), "source": src, "status": "observed" if bios.get("SystemBiosMajorVersion") is not None else "unknown"},
-            "bios_minor_release": {"value": bios.get("SystemBiosMinorVersion"), "source": src, "status": "observed" if bios.get("SystemBiosMinorVersion") is not None else "unknown"},
+            "baseboard_manufacturer": {
+                "value": bb.get("Manufacturer"),
+                "source": src,
+                "status": "observed" if bb.get("Manufacturer") else "unknown",
+            },
+            "baseboard_product": {
+                "value": bb.get("Product"),
+                "source": src,
+                "status": "observed" if bb.get("Product") else "unknown",
+            },
+            "baseboard_version": {
+                "value": bb.get("Version"),
+                "source": src,
+                "status": "observed" if bb.get("Version") else "unknown",
+            },
+            "bios_manufacturer": {
+                "value": bios.get("Manufacturer"),
+                "source": src,
+                "status": "observed" if bios.get("Manufacturer") else "unknown",
+            },
+            "bios_version": {
+                "value": bios.get("SMBIOSBIOSVersion") or "Unknown",
+                "source": src,
+                "status": "observed" if bios.get("SMBIOSBIOSVersion") else "unknown",
+            },
+            "bios_major_release": {
+                "value": bios.get("SystemBiosMajorVersion"),
+                "source": src,
+                "status": "observed" if bios.get("SystemBiosMajorVersion") is not None else "unknown",
+            },
+            "bios_minor_release": {
+                "value": bios.get("SystemBiosMinorVersion"),
+                "source": src,
+                "status": "observed" if bios.get("SystemBiosMinorVersion") is not None else "unknown",
+            },
         }
 
         cpu_name = cpu.get("Name")
@@ -491,7 +535,12 @@ class HwInfoParser:
             raw_bytes = edid_path.read_bytes()
         except OSError as e:
             self.missing.append(
-                {"category": "EDID_DECODE_ERROR", "item": "Display EDID read", "lookup_type": "TOOL", "instruction": str(e)}
+                {
+                    "category": "EDID_DECODE_ERROR",
+                    "item": "Display EDID read",
+                    "lookup_type": "TOOL",
+                    "instruction": str(e),
+                }
             )
             return None
 
@@ -791,11 +840,15 @@ class HwInfoParser:
 
                 cid = None
                 is_disabled = False
-                cid_m = re.search(rf"Device\s*\(\s*{dname}\s*\)[\s\S]*?Name\s*\(\s*_CID\s*,\s*\"([A-Za-z0-9]+)\"", dsl_text)
+                cid_m = re.search(
+                    rf"Device\s*\(\s*{dname}\s*\)[\s\S]*?Name\s*\(\s*_CID\s*,\s*\"([A-Za-z0-9]+)\"", dsl_text
+                )
                 if cid_m:
                     cid = cid_m.group(1)
 
-                sta_m = re.search(rf"Device\s*\(\s*{dname}\s*\)[\s\S]*?Method\s*\(\s*_STA[^{{]*\{{([\s\S]*?)\}}", dsl_text)
+                sta_m = re.search(
+                    rf"Device\s*\(\s*{dname}\s*\)[\s\S]*?Method\s*\(\s*_STA[^{{]*\{{([\s\S]*?)\}}", dsl_text
+                )
                 if sta_m:
                     sta_body = sta_m.group(1)
                     if "0x0F" in sta_body or "0x0B" in sta_body or "0xF" in sta_body:
@@ -1329,9 +1382,7 @@ class HwInfoParser:
                 canonical_device = pci_names.get((vid, did))
                 canonical_vendor = pci_vendors.get(vid)
                 resolved_caption = (
-                    " ".join(filter(None, (canonical_vendor, canonical_device)))
-                    if canonical_device
-                    else caption
+                    " ".join(filter(None, (canonical_vendor, canonical_device))) if canonical_device else caption
                 )
 
                 loc_data = pci_locations.get(device_id.upper(), {})
@@ -1400,9 +1451,7 @@ class HwInfoParser:
                 canonical_device = usb_names.get((vid, pid))
                 canonical_vendor = usb_vendors.get(vid)
                 resolved_caption = (
-                    " ".join(filter(None, (canonical_vendor, canonical_device)))
-                    if canonical_device
-                    else caption
+                    " ".join(filter(None, (canonical_vendor, canonical_device))) if canonical_device else caption
                 )
                 self.facts["usb_devices"].append(
                     {
