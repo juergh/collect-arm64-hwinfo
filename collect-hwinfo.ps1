@@ -177,10 +177,10 @@ $inventory = [ordered]@{
     sources = [ordered]@{
         "root/cimv2" = [ordered]@{
             "Win32_ComputerSystem" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_ComputerSystem" -AllowList @(
-                "Manufacturer", "Model", "SystemFamily", "TotalPhysicalMemory"
+                "Manufacturer", "Model", "SystemFamily", "SystemSKUNumber", "TotalPhysicalMemory"
             )
             "Win32_ComputerSystemProduct" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_ComputerSystemProduct" -AllowList @(
-                "Version", "SKUNumber"
+                "Name", "Version", "SKUNumber"
             )
             "Win32_BaseBoard" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_BaseBoard" -AllowList @(
                 "Manufacturer", "Product", "Version"
@@ -192,7 +192,8 @@ $inventory = [ordered]@{
                 "Name", "NumberOfCores", "NumberOfLogicalProcessors", "MaxClockSpeed"
             )
             "Win32_BIOS" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_BIOS" -AllowList @(
-                "Manufacturer", "SMBIOSBIOSVersion", "SystemBiosMajorVersion", "SystemBiosMinorVersion", "ReleaseDate"
+                "Manufacturer", "SMBIOSBIOSVersion", "SystemBiosMajorVersion", "SystemBiosMinorVersion",
+                "EmbeddedControllerMajorVersion", "EmbeddedControllerMinorVersion", "BIOSVersion", "Version", "ReleaseDate"
             )
         }
         "root/wmi" = [ordered]@{}

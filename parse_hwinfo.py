@@ -29,6 +29,21 @@ from pathlib import Path
 CHID_NAMESPACE = uuid.UUID("70ffd812-4c7f-4c7d-0000-000000000000")
 CHID_DEFINITIONS = (
     (
+        0,
+        ("Manufacturer", "Family", "ProductName", "ProductSku", "BiosVendor", "BiosVersion", "BiosMajorRelease", "BiosMinorRelease"),
+        "Manufacturer + Family + ProductName + ProductSku + BiosVendor + BiosVersion + BiosMajorRelease + BiosMinorRelease",
+    ),
+    (
+        1,
+        ("Manufacturer", "Family", "ProductName", "BiosVendor", "BiosVersion", "BiosMajorRelease", "BiosMinorRelease"),
+        "Manufacturer + Family + ProductName + BiosVendor + BiosVersion + BiosMajorRelease + BiosMinorRelease",
+    ),
+    (
+        2,
+        ("Manufacturer", "ProductName", "BiosVendor", "BiosVersion", "BiosMajorRelease", "BiosMinorRelease"),
+        "Manufacturer + ProductName + BiosVendor + BiosVersion + BiosMajorRelease + BiosMinorRelease",
+    ),
+    (
         3,
         ("Manufacturer", "Family", "ProductName", "ProductSku", "BaseboardManufacturer", "BaseboardProduct"),
         "Manufacturer + Family + ProductName + ProductSku + BaseboardManufacturer + BaseboardProduct",
@@ -261,8 +276,20 @@ class HwInfoParser:
         mfg_str = cs.get("Manufacturer") or "Unknown"
         raw_model = cs.get("Model") or "Unknown"
         model_str = re.sub(r"^(\S+)(?:\s+\1\b)+", r"\1", raw_model)
+        product_name = csp.get("Name") or raw_model
+        sku = csp.get("SKUNumber") or cs.get("SystemSKUNumber")
         chassis_types = enc.get("ChassisTypes", [])
-        chassis_str = str(chassis_types[0]) if chassis_types else None
+        chassis_str = f"{chassis_types[0]:x}" if chassis_types else None
+
+        bios_mfg = bios.get("Manufacturer")
+        bios_ver = bios.get("SMBIOSBIOSVersion") or "Unknown"
+        bios_maj = bios.get("SystemBiosMajorVersion")
+        bios_min = bios.get("SystemBiosMinorVersion")
+        ec_maj = bios.get("EmbeddedControllerMajorVersion")
+        ec_min = bios.get("EmbeddedControllerMinorVersion")
+
+        ec_maj_str = f"{ec_maj:02x}" if ec_maj is not None else None
+        ec_min_str = f"{ec_min:02x}" if ec_min is not None else None
 
         src = "inventory.json:Win32_*"
 
@@ -273,16 +300,20 @@ class HwInfoParser:
                 "status": "observed" if cs.get("Manufacturer") else "unknown",
             },
             "model": {"value": model_str, "source": src, "status": "observed" if cs.get("Model") else "unknown"},
-            "product_name": {"value": raw_model, "source": src, "status": "observed" if cs.get("Model") else "unknown"},
+            "product_name": {
+                "value": product_name,
+                "source": src,
+                "status": "observed" if (csp.get("Name") or cs.get("Model")) else "unknown",
+            },
             "family": {
                 "value": cs.get("SystemFamily") or "Unknown",
                 "source": src,
                 "status": "observed" if cs.get("SystemFamily") else "unknown",
             },
             "sku": {
-                "value": csp.get("SKUNumber"),
+                "value": sku,
                 "source": src,
-                "status": "observed" if csp.get("SKUNumber") else "unknown",
+                "status": "observed" if sku else "unknown",
             },
             "system_version": {
                 "value": csp.get("Version"),
@@ -306,24 +337,34 @@ class HwInfoParser:
                 "status": "observed" if bb.get("Version") else "unknown",
             },
             "bios_manufacturer": {
-                "value": bios.get("Manufacturer"),
+                "value": bios_mfg,
                 "source": src,
-                "status": "observed" if bios.get("Manufacturer") else "unknown",
+                "status": "observed" if bios_mfg else "unknown",
             },
             "bios_version": {
-                "value": bios.get("SMBIOSBIOSVersion") or "Unknown",
+                "value": bios_ver,
                 "source": src,
                 "status": "observed" if bios.get("SMBIOSBIOSVersion") else "unknown",
             },
             "bios_major_release": {
-                "value": bios.get("SystemBiosMajorVersion"),
+                "value": bios_maj,
                 "source": src,
-                "status": "observed" if bios.get("SystemBiosMajorVersion") is not None else "unknown",
+                "status": "observed" if bios_maj is not None else "unknown",
             },
             "bios_minor_release": {
-                "value": bios.get("SystemBiosMinorVersion"),
+                "value": bios_min,
                 "source": src,
-                "status": "observed" if bios.get("SystemBiosMinorVersion") is not None else "unknown",
+                "status": "observed" if bios_min is not None else "unknown",
+            },
+            "firmware_major_release": {
+                "value": ec_maj_str,
+                "source": src,
+                "status": "observed" if ec_maj_str is not None else "unknown",
+            },
+            "firmware_minor_release": {
+                "value": ec_min_str,
+                "source": src,
+                "status": "observed" if ec_min_str is not None else "unknown",
             },
         }
 
@@ -489,6 +530,12 @@ class HwInfoParser:
         system = self.facts["system"]
         display = self.facts["display"]
         system_keys = {
+            "BiosVendor": "bios_manufacturer",
+            "BiosVersion": "bios_version",
+            "BiosMajorRelease": "bios_major_release",
+            "BiosMinorRelease": "bios_minor_release",
+            "FirmwareMajorRelease": "firmware_major_release",
+            "FirmwareMinorRelease": "firmware_minor_release",
             "Manufacturer": "manufacturer",
             "Family": "family",
             "ProductName": "product_name",
@@ -500,7 +547,7 @@ class HwInfoParser:
 
         computer_info = {}
         for name, key in system_keys.items():
-            fact = dict(system[key])
+            fact = dict(system.get(key, {}))
             if fact.get("status") == "unknown":
                 fact["value"] = None
             computer_info[name] = fact
@@ -512,12 +559,24 @@ class HwInfoParser:
 
         hardware_ids = []
         for level, fields, description in CHID_DEFINITIONS:
-            values = [computer_info[field].get("value") for field in fields]
-            chid = self._generate_chid(values)
+            values = []
+            for field in fields:
+                val = computer_info.get(field, {}).get("value")
+                if val is None:
+                    values = None
+                    break
+                if field in ("BiosMajorRelease", "BiosMinorRelease"):
+                    try:
+                        val = f"{int(val):02x}"
+                    except (ValueError, TypeError):
+                        values = None
+                        break
+                values.append(str(val))
+            chid = self._generate_chid(values) if values else None
             if not chid:
                 continue
             sources = sorted(
-                {computer_info[field].get("source") for field in fields if computer_info[field].get("source")}
+                {computer_info[field].get("source") for field in fields if computer_info.get(field, {}).get("source")}
             )
             hardware_ids.append(
                 {
@@ -1970,19 +2029,26 @@ def format_hwids_txt(data: dict) -> str:
 
     lines = ["Computer Information", "--------------------"]
     for name in (
+        "BiosVendor",
+        "BiosVersion",
+        "BiosMajorRelease",
+        "BiosMinorRelease",
+        "FirmwareMajorRelease",
+        "FirmwareMinorRelease",
         "Manufacturer",
         "Family",
         "ProductName",
         "ProductSku",
+        "EnclosureKind",
         "BaseboardManufacturer",
         "BaseboardProduct",
-        "EDID",
     ):
-        lines.append(f"{name}: {computer_info.get(name, {}).get('value')}")
+        val = computer_info.get(name, {}).get("value")
+        lines.append(f"{name}: {val if val is not None else ''}")
 
     lines.extend(("Hardware IDs", "------------"))
     for entry in hwids.get("hardware_ids", []):
-        lines.append(f"{{{entry['guid']}}}\t<- #{entry['level']:<3} {entry['description']}")
+        lines.append(f"{{{entry['guid']}}}   <- {entry['description']}")
 
     return "\n".join(lines)
 
