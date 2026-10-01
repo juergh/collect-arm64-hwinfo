@@ -2042,6 +2042,7 @@ def format_hwids_txt(data: dict) -> str:
         "EnclosureKind",
         "BaseboardManufacturer",
         "BaseboardProduct",
+        "EDID",
     ):
         val = computer_info.get(name, {}).get("value")
         lines.append(f"{name}: {val if val is not None else ''}")
