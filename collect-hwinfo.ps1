@@ -529,6 +529,7 @@ $zipOutFile = Join-Path -Path $OutputDir -ChildPath "${dumpFolderName}.zip"
 Write-Host "Creating archive: $zipOutFile..." -ForegroundColor Cyan
 
 try {
+    Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     if (Test-Path -LiteralPath $zipOutFile) {
         Remove-Item -LiteralPath $zipOutFile -Force
