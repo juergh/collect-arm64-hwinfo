@@ -9,7 +9,8 @@
     Linux support (especially Devicetree models on ARM platforms and drivers):
       - System and processor identity from SMBIOS/CIM
       - Present Plug-and-Play hardware IDs, compatible IDs and active driver info
-      - PCI topology and raw location paths
+      - PnP parent, bus, address, and location topology for retained devices
+      - Physical port/connector and system-slot metadata
       - Display EDID from the Windows registry
       - Safe battery parameters and raw capacities
       - Raw ACPI tables from both the registry cache and the firmware API
@@ -78,7 +79,9 @@ This script will collect and save the following to a local directory:
   [+] System manufacturer, model, family, SKU, chassis type, board identity,
       processor name, core count, and BIOS vendor/version information
   [+] Present PnP hardware IDs, compatible IDs, and active driver names
-  [+] PCI topology: bus numbers, device addresses, location paths
+  [+] PnP topology: parent device IDs, bus numbers, device addresses, location paths
+  [+] Physical port connectors and expansion slot metadata from SMBIOS/CIM
+  [+] PnP device status, services, and hardware problem codes
   [+] Display EDID: raw binary blocks from the registry (unmodified, so it
       may contain the monitor's serial number)
   [+] Battery model, manufacturer, chemistry, and raw capacity parameters
@@ -154,6 +157,21 @@ function Get-SafeCimRecord([string]$Namespace, [string]$ClassName, [string[]]$Al
     }
 }
 
+function Convert-SafePnpValue($Value) {
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [byte[]]) { return $null }
+    if ($Value -is [System.Guid]) { return $Value.ToString() }
+    if ($Value -is [System.Array]) {
+        $arr = @()
+        foreach ($item in $Value) {
+            $converted = Convert-SafePnpValue $item
+            if ($null -ne $converted) { $arr += $converted }
+        }
+        return $arr
+    }
+    return $Value
+}
+
 # -----------------------------------------------------------------------------
 # 3. System & BIOS Information (Safe Allowlist)
 # -----------------------------------------------------------------------------
@@ -171,6 +189,9 @@ $inventory = [ordered]@{
         battery_serials_collected = $false
         attached_devices_included = $false
         raw_edid_may_contain_monitor_serial = $true
+        pnp_location_paths_collected = $true
+        pnp_parent_ids_collected = $true
+        physical_connectors_collected = $true
         usb_classification = "Windows removal policy (ExpectNoRemoval kept; attachable/unknown excluded; best effort)"
         excluded_acpi_signatures = @("MSDM", "SLIC")
     }
@@ -194,6 +215,16 @@ $inventory = [ordered]@{
             "Win32_BIOS" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_BIOS" -AllowList @(
                 "Manufacturer", "SMBIOSBIOSVersion", "SystemBiosMajorVersion", "SystemBiosMinorVersion",
                 "EmbeddedControllerMajorVersion", "EmbeddedControllerMinorVersion", "BIOSVersion", "Version", "ReleaseDate"
+            )
+            "Win32_PortConnector" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_PortConnector" -AllowList @(
+                "InternalReferenceDesignator", "ExternalReferenceDesignator", "PortType", "ConnectorType"
+            )
+            "Win32_SystemSlot" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_SystemSlot" -AllowList @(
+                "SlotDesignation", "CurrentUsage", "Status", "MaxDataWidth", "BusNumber", "DeviceNumber",
+                "FunctionNumber", "SegmentGroupNumber", "SupportsHotPlug"
+            )
+            "Win32_OnBoardDevice" = Get-SafeCimRecord -Namespace "" -ClassName "Win32_OnBoardDevice" -AllowList @(
+                "Description", "DeviceType", "Enabled", "Status"
             )
         }
         "root/wmi" = [ordered]@{}
@@ -238,15 +269,41 @@ $filteredPnp = @($presentPnp | Where-Object { -not (Test-IsAttachedDevice $_.Ins
 $keptInstanceIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 foreach ($dev in $filteredPnp) { [void]$keptInstanceIds.Add($dev.InstanceId) }
 
-# pnp.devices: lightweight present device list
+# pnp.devices: present device list with topology and status
 $pnpDevicesRecords = @()
 foreach ($d in $filteredPnp) {
-    $pnpDevicesRecords += [pscustomobject][ordered]@{
-        InstanceId   = $d.InstanceId
-        Class        = $d.Class
-        FriendlyName = $d.FriendlyName
-        Status       = $d.Status
+    $rawProps = Get-PnpDeviceProperty -InstanceId $d.InstanceId -ErrorAction SilentlyContinue
+    $propMap = @{}
+    if ($rawProps) {
+        foreach ($p in $rawProps) {
+            if ($p.KeyName) {
+                $propMap[$p.KeyName] = $p.Data
+            }
+        }
     }
+
+    $rec = [ordered]@{
+        InstanceId                          = $d.InstanceId
+        Class                               = $d.Class
+        FriendlyName                        = $d.FriendlyName
+        Status                              = $d.Status
+        PropertyQueryStatus                 = if ($rawProps) { "ok" } else { "unavailable" }
+        DEVPKEY_Device_Parent               = Convert-SafePnpValue $propMap["DEVPKEY_Device_Parent"]
+        DEVPKEY_Device_LocationPaths        = Convert-SafePnpValue $propMap["DEVPKEY_Device_LocationPaths"]
+        DEVPKEY_Device_LocationInfo         = Convert-SafePnpValue $propMap["DEVPKEY_Device_LocationInfo"]
+        DEVPKEY_Device_BusTypeGuid          = Convert-SafePnpValue $propMap["DEVPKEY_Device_BusTypeGuid"]
+        DEVPKEY_Device_BusNumber            = Convert-SafePnpValue $propMap["DEVPKEY_Device_BusNumber"]
+        DEVPKEY_Device_Address              = Convert-SafePnpValue $propMap["DEVPKEY_Device_Address"]
+        DEVPKEY_Device_EnumeratorName       = Convert-SafePnpValue $propMap["DEVPKEY_Device_EnumeratorName"]
+        DEVPKEY_Device_RemovalPolicy        = Convert-SafePnpValue $propMap["DEVPKEY_Device_RemovalPolicy"]
+        DEVPKEY_Device_RemovalPolicyDefault = Convert-SafePnpValue $propMap["DEVPKEY_Device_RemovalPolicyDefault"]
+        DEVPKEY_Device_SafeRemovalRequired  = Convert-SafePnpValue $propMap["DEVPKEY_Device_SafeRemovalRequired"]
+        DEVPKEY_Device_Service              = Convert-SafePnpValue $propMap["DEVPKEY_Device_Service"]
+        DEVPKEY_Device_BusReportedDeviceDesc = Convert-SafePnpValue $propMap["DEVPKEY_Device_BusReportedDeviceDesc"]
+        DEVPKEY_Device_ProblemCode          = Convert-SafePnpValue $propMap["DEVPKEY_Device_ProblemCode"]
+        DEVPKEY_Device_HasProblem           = Convert-SafePnpValue $propMap["DEVPKEY_Device_HasProblem"]
+    }
+    $pnpDevicesRecords += [pscustomobject]$rec
 }
 $inventory.sources.pnp["devices"] = [ordered]@{ status = "ok"; records = $pnpDevicesRecords }
 
@@ -257,12 +314,13 @@ try {
     $entityRecords = @()
     foreach ($e in $entities) {
         $entityRecords += [pscustomobject][ordered]@{
-            Caption       = $e.Caption
-            PNPClass      = $e.PNPClass
-            DeviceID      = $e.DeviceID
-            HardwareID    = @($e.HardwareID)
-            CompatibleID  = if ($e.CompatibleID) { @($e.CompatibleID) } else { @() }
-            Status        = $e.Status
+            Caption                = $e.Caption
+            PNPClass               = $e.PNPClass
+            DeviceID               = $e.DeviceID
+            HardwareID             = @($e.HardwareID)
+            CompatibleID           = if ($e.CompatibleID) { @($e.CompatibleID) } else { @() }
+            Status                 = $e.Status
+            ConfigManagerErrorCode = $e.ConfigManagerErrorCode
         }
     }
     $inventory.sources.pnp["entities"] = [ordered]@{ status = "ok"; records = $entityRecords }
@@ -290,25 +348,6 @@ try {
 } catch {
     $inventory.sources.pnp["drivers"] = [ordered]@{ status = "query-failed"; error = $_.Exception.Message; records = @() }
 }
-
-# pnp.pci_properties: PCI location paths, bus numbers, raw device addresses
-$pciRecords = @()
-foreach ($d in ($filteredPnp | Where-Object { $_.InstanceId -like "PCI\*" })) {
-    $instId = $d.InstanceId
-    $locPaths = (Get-PnpDeviceProperty -InstanceId $instId -KeyName "DEVPKEY_Device_LocationPaths" -ErrorAction SilentlyContinue).Data
-    $locInfo  = (Get-PnpDeviceProperty -InstanceId $instId -KeyName "DEVPKEY_Device_LocationInfo" -ErrorAction SilentlyContinue).Data
-    $busNum   = (Get-PnpDeviceProperty -InstanceId $instId -KeyName "DEVPKEY_Device_BusNumber" -ErrorAction SilentlyContinue).Data
-    $devAddr  = (Get-PnpDeviceProperty -InstanceId $instId -KeyName "DEVPKEY_Device_Address" -ErrorAction SilentlyContinue).Data
-
-    $pciRecords += [pscustomobject][ordered]@{
-        InstanceId                  = $instId
-        DEVPKEY_Device_LocationPaths = if ($locPaths) { @($locPaths) } else { @() }
-        DEVPKEY_Device_LocationInfo  = $locInfo
-        DEVPKEY_Device_BusNumber     = $busNum
-        DEVPKEY_Device_Address       = $devAddr
-    }
-}
-$inventory.sources.pnp["pci_properties"] = [ordered]@{ status = "ok"; records = $pciRecords }
 
 # -----------------------------------------------------------------------------
 # 5. Display & Battery Information (Safe Raw Values)

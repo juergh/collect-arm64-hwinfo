@@ -2,7 +2,7 @@
 
 This directory contains Windows collectors and a Linux parser for bootstrapping support on new laptops, with a particular focus on Qualcomm Snapdragon X (ARM64) platforms:
 
-1. **`collect-hwinfo.ps1`**: Extracts raw system hardware identifiers, PnP device inventory, display EDID, battery parameters, and raw ACPI tables. Collects no host name, system serial numbers or personal data (see Privacy Safeguards), so it is intended to be shared for kernel Devicetree and driver development.
+1. **`collect-hwinfo.ps1`**: Extracts raw system hardware identifiers, PnP device inventory and parent/location topology, physical connector metadata, display EDID, battery parameters, and raw ACPI tables. Collects no host name, system serial numbers or personal data (see Privacy Safeguards), so it is intended to be shared for kernel Devicetree and driver development.
 2. **`parse-hwinfo.py`**: Parses a hardware archive on Linux, records facts with source provenance, runs `iasl` and `edid-decode`, and generates an intentionally incomplete Devicetree review template.
 3. **`qcom-firmware-collect.ps1`**: Harvests proprietary Qualcomm DSP, GPU, video, Wi-Fi, and Bluetooth firmware binaries from the local Windows DriverStore. **Strictly for personal use** on this specific device (redistribution prohibited).
 
@@ -35,7 +35,7 @@ hwinfo-<Manufacturer>-<Model>-<Timestamp>.zip
 
 ### Privacy Safeguards
 - **Excluded**: Hostname, BIOS/system/battery serial numbers, UUIDs.
-- **Skipped devices**: Storage volumes, USB storage, paired Bluetooth devices, and USB devices Windows treats as removable are left out of the PnP inventory, because their instance IDs carry serial numbers and MAC addresses. Internal USB devices such as the camera are kept (classified via Windows removal policy; best effort).
+- **Skipped devices**: Storage volumes, USB storage, paired Bluetooth devices, and USB devices Windows treats as removable are left out of the PnP inventory, because their instance IDs carry serial numbers and MAC addresses. Internal devices (including internal USB devices such as cameras and biometric sensors) are kept with their parent controller and location topology (classified via Windows removal policy; best effort).
 - **Not scrubbed**: The raw EDID is saved unmodified and may contain the monitor's serial number.
 - **Excluded License Keys**: `MSDM` (OEM Windows activation keys) and `SLIC` tables are strictly filtered out.
 - **Mandatory Consent**: Displays an itemized manifest and halts for explicit `[y/N]` confirmation before saving any files.

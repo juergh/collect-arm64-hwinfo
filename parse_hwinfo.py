@@ -30,8 +30,20 @@ CHID_NAMESPACE = uuid.UUID("70ffd812-4c7f-4c7d-0000-000000000000")
 CHID_DEFINITIONS = (
     (
         0,
-        ("Manufacturer", "Family", "ProductName", "ProductSku", "BiosVendor", "BiosVersion", "BiosMajorRelease", "BiosMinorRelease"),
-        "Manufacturer + Family + ProductName + ProductSku + BiosVendor + BiosVersion + BiosMajorRelease + BiosMinorRelease",
+        (
+            "Manufacturer",
+            "Family",
+            "ProductName",
+            "ProductSku",
+            "BiosVendor",
+            "BiosVersion",
+            "BiosMajorRelease",
+            "BiosMinorRelease",
+        ),
+        (
+            "Manufacturer + Family + ProductName + ProductSku + "
+            "BiosVendor + BiosVersion + BiosMajorRelease + BiosMinorRelease"
+        ),
     ),
     (
         1,
@@ -165,6 +177,9 @@ class HwInfoParser:
             "acpi_properties": [],
             "pci_devices": [],
             "usb_devices": [],
+            "physical_connectors": [],
+            "system_slots": [],
+            "onboard_devices": [],
             "wifi": None,
             "ethernet": None,
             "display": {},
@@ -254,6 +269,7 @@ class HwInfoParser:
 
     def parse(self):
         self._parse_system_and_cpu()
+        self._parse_connectors_and_slots()
         self._parse_display()
         self._parse_battery()
         self._compute_hwids()
@@ -394,6 +410,46 @@ class HwInfoParser:
                     "base_dtsi": "FIXME_BASE_SOC.dtsi",
                     "status": "runtime-observed",
                 }
+
+    def _parse_connectors_and_slots(self):
+        for p in self._get_records("root/cimv2", "Win32_PortConnector"):
+            self.facts["physical_connectors"].append(
+                {
+                    "internal_reference": p.get("InternalReferenceDesignator"),
+                    "external_reference": p.get("ExternalReferenceDesignator"),
+                    "port_type": p.get("PortType"),
+                    "connector_type": p.get("ConnectorType"),
+                    "source": "inventory.json:Win32_PortConnector",
+                    "status": "observed",
+                }
+            )
+
+        for s in self._get_records("root/cimv2", "Win32_SystemSlot"):
+            self.facts["system_slots"].append(
+                {
+                    "slot_designation": s.get("SlotDesignation"),
+                    "current_usage": s.get("CurrentUsage"),
+                    "status_code": s.get("Status"),
+                    "max_data_width": s.get("MaxDataWidth"),
+                    "bus_number": s.get("BusNumber"),
+                    "device_number": s.get("DeviceNumber"),
+                    "function_number": s.get("FunctionNumber"),
+                    "source": "inventory.json:Win32_SystemSlot",
+                    "status": "observed",
+                }
+            )
+
+        for o in self._get_records("root/cimv2", "Win32_OnBoardDevice"):
+            self.facts["onboard_devices"].append(
+                {
+                    "description": o.get("Description"),
+                    "device_type": o.get("DeviceType"),
+                    "enabled": o.get("Enabled"),
+                    "status_code": o.get("Status"),
+                    "source": "inventory.json:Win32_OnBoardDevice",
+                    "status": "observed",
+                }
+            )
 
     # -------------------------------------------------------------------------
     # 2. Display EDID & Battery Interpretation
@@ -796,17 +852,20 @@ class HwInfoParser:
         dsl_index = DslIndex(dsl_text)
 
         # 3a. Extract MMIO base addresses for controllers from DSDT.dsl (Memory32Fixed)
-        for m in re.finditer(
-            r"Device\s*\(\s*([A-Za-z0-9_]+)\s*\)\s*\{([\s\S]*?Method\s*\(\s*_CRS[\s\S]*?Return\s*\(\s*\w+\s*\)[\s\S]*?\})",
-            dsl_text,
-        ):
-            cname = m.group(1)
-            body = m.group(2)
-            mem_m = re.search(r"Memory32Fixed\s*\(\s*\w+\s*,[\s\S]*?(0x[0-9A-Fa-f]+)[\s\S]*?(0x[0-9A-Fa-f]+)", body)
-            irq_m = re.search(r"Interrupt\s*\([^\{]+\{\s*(0x[0-9A-Fa-f]+|\d+)\s*\}", body)
-            if mem_m:
-                self.facts["controllers"][cname] = {
-                    "acpi_path": f"\\_SB.{cname}",
+        for dev_name, dev_open in dsl_index.devices():
+            crs_method = dsl_index.own_method(dev_open, "_CRS")
+            crs_name = dsl_index.own_block(dev_open, r"Name\s*\(\s*_CRS\s*,\s*ResourceTemplate\s*\([^{]*\{")
+            crs_body = crs_method or crs_name
+            if not crs_body:
+                continue
+            mem_m = re.search(
+                r"Memory32Fixed\s*\(\s*\w+\s*,[\s\S]*?(0x[0-9A-Fa-f]+)[\s\S]*?(0x[0-9A-Fa-f]+)",
+                crs_body,
+            )
+            irq_m = re.search(r"Interrupt\s*\([^\{]+\{\s*(0x[0-9A-Fa-f]+|\d+)\s*\}", crs_body)
+            if mem_m and dev_name not in self.facts["controllers"]:
+                self.facts["controllers"][dev_name] = {
+                    "acpi_path": dsl_index.path(dev_open),
                     "mmio_base": hex(int(mem_m.group(1), 0)).lower(),
                     "mmio_length": hex(int(mem_m.group(2), 0)),
                     "interrupt": hex(int(irq_m.group(1), 0)) if irq_m else None,
@@ -1418,16 +1477,45 @@ class HwInfoParser:
 
         return vendors, devices, str(database_path)
 
+    def _pnp_parent_chain(self, instance_id, devices_by_id):
+        chain = []
+        curr = (instance_id or "").upper()
+        visited = set()
+        for _ in range(16):
+            if not curr or curr in visited:
+                break
+            visited.add(curr)
+            dev = devices_by_id.get(curr)
+            if not dev:
+                break
+            parent = dev.get("DEVPKEY_Device_Parent")
+            if not parent:
+                break
+            parent_clean = str(parent).strip()
+            chain.append(parent_clean)
+            curr = parent_clean.upper()
+        return chain
+
     def _parse_pci_and_pnp(self):
-        pci_props_records = self._get_records("pnp", "pci_properties")
+        device_records = self._get_records("pnp", "devices")
         entity_records = self._get_records("pnp", "entities")
 
-        # Map PCI location properties by normalized uppercase InstanceId
-        pci_locations = {}
-        for p in pci_props_records:
-            inst = p.get("InstanceId", "").upper()
+        devices_by_id = {}
+        for d in device_records:
+            inst = d.get("InstanceId", "").upper()
             if inst:
-                pci_locations[inst] = p
+                devices_by_id[inst] = d
+
+        dt_pcie_map = {
+            "PCI0": "&pcie0",
+            "PCI1": "&pcie1",
+            "PCI2": "&pcie2",
+            "PCI3": "&pcie3",
+            "PCI4": "&pcie4_port0",
+            "PCI5": "&pcie5",
+            "PCI6": "&pcie6a",
+            "PCI7": "&pcie7",
+        }
 
         pci_vendors, pci_names, pci_ids_source = self._load_id_database("pci")
         usb_vendors, usb_names, usb_ids_source = self._load_id_database("usb")
@@ -1454,20 +1542,22 @@ class HwInfoParser:
                     " ".join(filter(None, (canonical_vendor, canonical_device))) if canonical_device else caption
                 )
 
-                loc_data = pci_locations.get(device_id.upper(), {})
-                loc_paths_arr = loc_data.get("DEVPKEY_Device_LocationPaths", [])
+                dev_data = devices_by_id.get(device_id.upper(), {})
+                loc_paths_arr = dev_data.get("DEVPKEY_Device_LocationPaths") or []
+                if isinstance(loc_paths_arr, str):
+                    loc_paths_arr = [loc_paths_arr]
                 loc_paths = ", ".join(loc_paths_arr) if loc_paths_arr else None
 
                 root_m = re.search(r"#ACPI\((PCI[0-9A-Za-z]+)\)", loc_paths) if loc_paths else None
                 acpi_root = root_m.group(1) if root_m else None
                 dt_port = (
-                    f"&{acpi_root.lower()}_port0"
-                    if (acpi_root and "PCI4" in acpi_root)
+                    dt_pcie_map.get(acpi_root.upper())
+                    if acpi_root
                     else (f"&{acpi_root.lower()}" if acpi_root else None)
                 )
 
                 # Decode device/function from DEVPKEY_Device_Address
-                raw_addr = loc_data.get("DEVPKEY_Device_Address")
+                raw_addr = dev_data.get("DEVPKEY_Device_Address")
                 addr_desc = None
                 if raw_addr is not None:
                     try:
@@ -1478,7 +1568,12 @@ class HwInfoParser:
                     except Exception:
                         addr_desc = str(raw_addr)
 
-                bus_num = loc_data.get("DEVPKEY_Device_BusNumber")
+                bus_num = dev_data.get("DEVPKEY_Device_BusNumber")
+                parent_id = dev_data.get("DEVPKEY_Device_Parent")
+                parent_chain = self._pnp_parent_chain(device_id, devices_by_id)
+                prob_code = dev_data.get("DEVPKEY_Device_ProblemCode")
+                has_prob = dev_data.get("DEVPKEY_Device_HasProblem")
+
                 pci_entry = {
                     "caption": resolved_caption,
                     "collector_caption": caption,
@@ -1494,6 +1589,12 @@ class HwInfoParser:
                     "address": addr_desc,
                     "acpi_root_port": acpi_root,
                     "dt_pcie_port": dt_port,
+                    "parent_instance_id": parent_id,
+                    "parent_chain": parent_chain,
+                    "problem_code": prob_code,
+                    "has_problem": has_prob,
+                    "service": dev_data.get("DEVPKEY_Device_Service"),
+                    "config_manager_error_code": e.get("ConfigManagerErrorCode"),
                     "source": "inventory.json:pnp.entities",
                     "status": "runtime-observed",
                 }
@@ -1522,20 +1623,52 @@ class HwInfoParser:
                 resolved_caption = (
                     " ".join(filter(None, (canonical_vendor, canonical_device))) if canonical_device else caption
                 )
-                self.facts["usb_devices"].append(
-                    {
-                        "caption": resolved_caption,
-                        "collector_caption": caption,
-                        "caption_source": usb_ids_source if canonical_device else "inventory.json:pnp.entities",
-                        "caption_status": "inferred" if canonical_device else "observed",
-                        "class": pnp_cls,
-                        "vendor_id": vid,
-                        "product_id": pid,
-                        "device_id_str": device_id,
-                        "source": "inventory.json:pnp.entities",
-                        "status": "runtime-observed",
-                    }
-                )
+
+                dev_data = devices_by_id.get(device_id.upper(), {})
+                loc_paths_arr = dev_data.get("DEVPKEY_Device_LocationPaths") or []
+                if isinstance(loc_paths_arr, str):
+                    loc_paths_arr = [loc_paths_arr]
+                loc_paths = ", ".join(loc_paths_arr) if loc_paths_arr else None
+
+                parent_chain = self._pnp_parent_chain(device_id, devices_by_id)
+                full_loc_paths = loc_paths
+                if not full_loc_paths:
+                    for p_id in parent_chain:
+                        p_data = devices_by_id.get(p_id.upper(), {})
+                        p_locs = p_data.get("DEVPKEY_Device_LocationPaths") or []
+                        if isinstance(p_locs, str):
+                            p_locs = [p_locs]
+                        if p_locs:
+                            full_loc_paths = ", ".join(p_locs)
+                            break
+
+                acpi_ctrl_m = re.search(r"#ACPI\((USB[0-9A-Za-z]+)\)", full_loc_paths) if full_loc_paths else None
+                acpi_ctrl = acpi_ctrl_m.group(1) if acpi_ctrl_m else None
+                ctrl_info = self.facts["controllers"].get(acpi_ctrl, {}) if acpi_ctrl else {}
+                ctrl_mmio = ctrl_info.get("mmio_base")
+
+                usb_entry = {
+                    "caption": resolved_caption,
+                    "collector_caption": caption,
+                    "caption_source": usb_ids_source if canonical_device else "inventory.json:pnp.entities",
+                    "caption_status": "inferred" if canonical_device else "observed",
+                    "class": pnp_cls,
+                    "vendor_id": vid,
+                    "product_id": pid,
+                    "device_id_str": device_id,
+                    "location_paths": full_loc_paths,
+                    "acpi_controller": acpi_ctrl,
+                    "controller_mmio": ctrl_mmio,
+                    "parent_instance_id": dev_data.get("DEVPKEY_Device_Parent"),
+                    "parent_chain": parent_chain,
+                    "problem_code": dev_data.get("DEVPKEY_Device_ProblemCode"),
+                    "has_problem": dev_data.get("DEVPKEY_Device_HasProblem"),
+                    "service": dev_data.get("DEVPKEY_Device_Service"),
+                    "config_manager_error_code": e.get("ConfigManagerErrorCode"),
+                    "source": "inventory.json:pnp.entities",
+                    "status": "runtime-observed",
+                }
+                self.facts["usb_devices"].append(usb_entry)
 
     # -------------------------------------------------------------------------
     # 5. Build Missing Data Checklist
@@ -1652,23 +1785,87 @@ class HwInfoParser:
         camera_gpios = [g for g in self.facts.get("gpio_devices", []) if g["role"] == "camera"]
 
         for (vid, pid), names in usb_cameras.items():
+            u_dev = next(
+                (
+                    u
+                    for u in self.facts.get("usb_devices", [])
+                    if (u.get("vendor_id"), u.get("product_id")) == (vid, pid)
+                ),
+                {},
+            )
+            acpi_ctrl = u_dev.get("acpi_controller")
+            mmio = u_dev.get("controller_mmio")
+            loc = u_dev.get("location_paths")
+            if acpi_ctrl and mmio:
+                instr = (
+                    f"UVC camera on internal ACPI controller {acpi_ctrl} (MMIO {mmio}, location {loc or 'unknown'}). "
+                    f"Identify matching Linux DT controller label and describe repeater/power wiring."
+                )
+            else:
+                instr = (
+                    "UVC camera on a USB port. It needs no camera pipeline node; describe the USB port "
+                    "it is attached to."
+                )
             self.missing.append(
                 {
                     "category": "USB_CAMERA",
                     "item": f"USB camera {vid}:{pid} ({', '.join(names)})",
                     "lookup_type": "BOARD",
-                    "instruction": (
-                        "UVC camera on a USB port. It needs no camera pipeline node; describe the USB port "
-                        "it is attached to."
-                    ),
+                    "instruction": instr,
                 }
             )
+
+        for dev_type, dev_list in [
+            ("PCI", self.facts.get("pci_devices", [])),
+            ("USB", self.facts.get("usb_devices", [])),
+        ]:
+            for d in dev_list:
+                prob = d.get("problem_code")
+                has_prob = d.get("has_problem")
+                if has_prob or (prob is not None and str(prob) not in ("0", "")):
+                    dev_id_str = (
+                        d.get("device_id_str")
+                        or f"{d.get('vendor_id')}:{d.get('device_id') or d.get('product_id')}"
+                    )
+                    self.missing.append(
+                        {
+                            "category": "PNP_DEVICE_PROBLEM",
+                            "item": f"{dev_type} device error: {d.get('caption', 'Unknown')} ({dev_id_str})",
+                            "lookup_type": "HARDWARE",
+                            "instruction": (
+                                f"Windows reports problem code {prob} for device {dev_id_str} "
+                                f"(Service: {d.get('service') or 'none'}, "
+                                f"Location: {d.get('location_paths') or 'unknown'}). "
+                                "Verify if device requires missing firmware, unasserted reset/power GPIOs, "
+                                "or external RF switches."
+                            ),
+                        }
+                    )
 
         camera_note = "Camera sensor is abstracted by Qualcomm ISP firmware and has no ACPI/PnP node."
         if camera_gpios:
             camera_note = (
                 f"ACPI defines camera GPIOs ({', '.join(g['acpi_name'] for g in camera_gpios)}), so a MIPI CSI "
                 f"sensor may exist" + (" in addition to the USB camera. " if usb_cameras else ". ") + camera_note
+            )
+
+        has_hdmi = any(
+            re.search(
+                r"hdmi",
+                f"{c.get('internal_reference', '')} {c.get('external_reference', '')}",
+                re.IGNORECASE,
+            )
+            for c in self.facts.get("physical_connectors", [])
+        )
+        dp_desc = (
+            "EDID identifies panel ID, but DP controller selection (&mdss_dp3 vs others) "
+            "and power rail are board-specific."
+        )
+        if has_hdmi:
+            dp_desc = (
+                "SMBIOS/CIM reports physical HDMI connector, but ACPI/PnP does not identify its bridge or "
+                "controller routing. "
+                + dp_desc
             )
 
         invisible_hardware = []
@@ -1681,10 +1878,7 @@ class HwInfoParser:
                 "display_pipeline",
                 "DisplayPort controller routing & panel power GPIO",
                 "BOARD",
-                (
-                    "EDID identifies panel ID, but DP controller selection (&mdss_dp3 vs others) "
-                    "and power rail are board-specific."
-                ),
+                dp_desc,
             ),
             (
                 "audio_codecs",
@@ -1944,6 +2138,32 @@ def format_board_dts_template(data: dict) -> str:
         lines.append(" */")
         lines.append("")
 
+    connectors = facts.get("physical_connectors", [])
+    if connectors:
+        lines.append("/*")
+        lines.append(" * Physical Connectors (SMBIOS/CIM):")
+        for c in connectors:
+            c_int = c.get("internal_reference") or "N/A"
+            c_ext = c.get("external_reference") or "N/A"
+            lines.append(f" *   {c_int} / {c_ext} (PortType: {c.get('port_type')})")
+        lines.append(" */")
+        lines.append("")
+
+    usb_devs = facts.get("usb_devices", [])
+    if usb_devs:
+        lines.append("/*")
+        lines.append(" * Internal USB Devices:")
+        for u in usb_devs:
+            ctrl = u.get("acpi_controller") or "Unknown"
+            mmio = u.get("controller_mmio") or "Unknown"
+            loc = u.get("location_paths") or "Unknown"
+            lines.append(f" *   {u.get('caption', 'Device')} [{u.get('vendor_id')}:{u.get('product_id')}]")
+            lines.append(f" *     ACPI Controller: {ctrl} (MMIO: {mmio}), Location: {loc}")
+            if u.get("problem_code") and str(u.get("problem_code")) not in ("0", ""):
+                lines.append(f" *     WARNING: Windows reported PnP ProblemCode {u.get('problem_code')}")
+        lines.append(" */")
+        lines.append("")
+
     wifi = facts.get("wifi")
     if wifi:
         vid = wifi.get("vendor_id", "17cb")
@@ -2135,6 +2355,7 @@ def format_markdown_report(data: dict) -> str:
 
     periphs = facts.get("peripherals", [])
     pci_devs = facts.get("pci_devices", [])
+    usb_devs = facts.get("usb_devices", [])
     lines.append("\n## 2. Hardware Topology Tree (Synthesized)")
     lines.append("```text")
     lines.append("Platform Hardware Root")
@@ -2147,8 +2368,9 @@ def format_markdown_report(data: dict) -> str:
         controllers_seen[c].append(p)
 
     c_keys = list(controllers_seen.keys())
+    has_following = bool(pci_devs or usb_devs)
     if c_keys:
-        lines.append("├── ACPI Serial Controllers:")
+        lines.append("├── ACPI Serial Controllers:" if has_following else "└── ACPI Serial Controllers:")
         for c_idx, c_name in enumerate(c_keys):
             is_last_c = c_idx == len(c_keys) - 1
             c_branch = "└── " if is_last_c else "├── "
@@ -2170,12 +2392,25 @@ def format_markdown_report(data: dict) -> str:
                 )
 
     if pci_devs:
-        lines.append("└── PCIe Root Ports & Endpoints:")
+        lines.append("├── PCIe Root Ports & Endpoints:" if usb_devs else "└── PCIe Root Ports & Endpoints:")
+        p_indent = "│   " if usb_devs else "    "
         for p_idx, pdev in enumerate(pci_devs):
             is_last_p = p_idx == len(pci_devs) - 1
             p_branch = "└── " if is_last_p else "├── "
             port_label = pdev.get("dt_pcie_port") or pdev.get("acpi_root_port") or "PCIe Slot"
-            lines.append(f"    {p_branch}{port_label:<16} [{pdev['vendor_id']}:{pdev['device_id']}] {pdev['caption']}")
+            lines.append(
+                f"{p_indent}{p_branch}{port_label:<16} [{pdev['vendor_id']}:{pdev['device_id']}] {pdev['caption']}"
+            )
+
+    if usb_devs:
+        lines.append("└── Internal USB Endpoints:")
+        for u_idx, udev in enumerate(usb_devs):
+            is_last_u = u_idx == len(usb_devs) - 1
+            u_branch = "└── " if is_last_u else "├── "
+            ctrl_label = udev.get("acpi_controller") or "USB"
+            lines.append(
+                f"    {u_branch}{ctrl_label:<16} [{udev['vendor_id']}:{udev['product_id']}] {udev['caption']}"
+            )
 
     lines.append("```")
 
@@ -2245,6 +2480,35 @@ def format_markdown_report(data: dict) -> str:
             for prop in dev["properties"]:
                 lines.append(f"| `{dev['acpi_path']}` | `{prop['name']}` | `{prop['value']}` | `{prop['uuid']}` |")
 
+    connectors = facts.get("physical_connectors", [])
+    if connectors:
+        lines.append("\n### Physical Port Connectors")
+        lines.append("| Internal Reference | External Reference | Port Type | Connector Type | Source |")
+        lines.append("|---|---|---|---|---|")
+        for c in connectors:
+            c_type = c.get("connector_type")
+            c_type_str = (
+                ", ".join(str(x) for x in c_type)
+                if isinstance(c_type, list)
+                else (str(c_type) if c_type is not None else "N/A")
+            )
+            lines.append(
+                f"| `{c.get('internal_reference') or 'N/A'}` | `{c.get('external_reference') or 'N/A'}` | "
+                f"`{c.get('port_type') or 'N/A'}` | `{c_type_str}` | {c.get('source', '')} |"
+            )
+
+    slots = facts.get("system_slots", [])
+    if slots:
+        lines.append("\n### System Slots")
+        lines.append("| Designation | Usage | Status | Bus Number | Device Number | Function Number |")
+        lines.append("|---|---|---|---|---|---|")
+        for s in slots:
+            lines.append(
+                f"| `{s.get('slot_designation') or 'N/A'}` | `{s.get('current_usage') or 'N/A'}` | "
+                f"`{s.get('status_code') or 'N/A'}` | `{s.get('bus_number') or 'N/A'}` | "
+                f"`{s.get('device_number') or 'N/A'}` | `{s.get('function_number') or 'N/A'}` |"
+            )
+
     usb_devs = facts.get("usb_devices", [])
     if pci_devs or usb_devs:
         lines.append("\n## 4. PCI & USB Endpoint Inventory")
@@ -2257,19 +2521,35 @@ def format_markdown_report(data: dict) -> str:
             for p in pci_devs:
                 port = p.get("dt_pcie_port") or p.get("acpi_root_port") or "Unknown"
                 sub = p.get("subsystem_id") or "N/A"
+                prob = p.get("problem_code")
+                has_prob = p.get("has_problem")
+                status_str = p.get("status", "observed")
+                if has_prob or (prob is not None and str(prob) not in ("0", "")):
+                    status_str += f" (Problem {prob})"
                 lines.append(
                     f"| {p['caption']} | `{p['vendor_id']}:{p['device_id']}` | `{sub}` | {p['class']} | "
-                    f"`{port}` | {p.get('caption_source', p.get('source', ''))} | {p['status']} |"
+                    f"`{port}` | {p.get('caption_source', p.get('source', ''))} | {status_str} |"
                 )
 
         if usb_devs:
             lines.append("\n### USB Endpoints")
-            lines.append("| Endpoint Name | VID:PID | Class | Name Source | Status |")
-            lines.append("|---|---|---|---|---|")
+            lines.append(
+                "| Endpoint Name | VID:PID | Class | ACPI Ctrl | Ctrl MMIO | Port / Location | Name Source | Status |"
+            )
+            lines.append("|---|---|---|---|---|---|---|---|")
             for u in usb_devs:
+                ctrl = u.get("acpi_controller") or "Unknown"
+                mmio = u.get("controller_mmio") or "Unknown"
+                loc = u.get("location_paths") or "Unknown"
+                prob = u.get("problem_code")
+                has_prob = u.get("has_problem")
+                status_str = u.get("status", "observed")
+                if has_prob or (prob is not None and str(prob) not in ("0", "")):
+                    status_str += f" (Problem {prob})"
                 lines.append(
                     f"| {u['caption']} | `{u['vendor_id']}:{u['product_id']}` | {u['class']} | "
-                    f"{u.get('caption_source', u.get('source', ''))} | {u['status']} |"
+                    f"`{ctrl}` | `{mmio}` | `{loc}` | "
+                    f"{u.get('caption_source', u.get('source', ''))} | {status_str} |"
                 )
 
     lines.append("\n## 5. Checklist of Required Lookups (Missing Data)")
