@@ -3,7 +3,7 @@
 This directory contains Windows collectors and a Linux parser for bootstrapping support on new laptops, with a particular focus on Qualcomm Snapdragon X (ARM64) platforms:
 
 1. **`collect-hwinfo.ps1`**: Extracts raw system hardware identifiers, PnP device inventory and parent/location topology, physical connector metadata, display EDID, battery parameters, and raw ACPI tables. Collects no host name, system serial numbers or personal data (see Privacy Safeguards), so it is intended to be shared for kernel Devicetree and driver development.
-2. **`parse-hwinfo.py`**: Parses a hardware archive on Linux, records facts with source provenance, runs `iasl` and `edid-decode`, and generates an intentionally incomplete Devicetree review template.
+2. **`parse-hwinfo`**: Parses a hardware archive on Linux, records facts with source provenance, runs `iasl` and `edid-decode`, and generates an intentionally incomplete Devicetree review template.
 3. **`qcom-firmware-collect.ps1`**: Harvests proprietary Qualcomm DSP, GPU, video, Wi-Fi, and Bluetooth firmware binaries from the local Windows DriverStore. **Strictly for personal use** on this specific device (redistribution prohibited).
 
 ---
@@ -42,7 +42,7 @@ hwinfo-<Manufacturer>-<Model>-<Timestamp>.zip
 
 ---
 
-## 2. Linux Hardware Parser (`parse-hwinfo.py`)
+## 2. Linux Hardware Parser (`parse-hwinfo`)
 
 The parser accepts an unmodified `hwinfo-*.zip` archive or an extracted archive directory. It reads `inventory.json`, trims and decodes the EDID using `edid-decode`, reconciles the ACPI tables, and runs `iasl` locally to generate the ASL and hardware map in a temporary staging area. Missing information remains explicit as `TBD` or `FIXME` output.
 
@@ -69,19 +69,19 @@ parse-hwinfo --help
 ### Usage
 ```bash
 # Print the Markdown report (default output)
-./parse-hwinfo.py hwinfo-Vendor-Model-Timestamp.zip
+parse-hwinfo hwinfo-Vendor-Model-Timestamp.zip
 
 # Write all five artifacts to a directory
-./parse-hwinfo.py --all output/ hwinfo-Vendor-Model-Timestamp.zip
+parse-hwinfo --all output/ hwinfo-Vendor-Model-Timestamp.zip
 
 # Emit one artifact to standard output
-./parse-hwinfo.py --json hwinfo-Vendor-Model-Timestamp.zip
-./parse-hwinfo.py --missing hwinfo-Vendor-Model-Timestamp.zip
-./parse-hwinfo.py --dts hwinfo-Vendor-Model-Timestamp.zip
-./parse-hwinfo.py --hwids hwinfo-Vendor-Model-Timestamp.zip
+parse-hwinfo --json hwinfo-Vendor-Model-Timestamp.zip
+parse-hwinfo --missing hwinfo-Vendor-Model-Timestamp.zip
+parse-hwinfo --dts hwinfo-Vendor-Model-Timestamp.zip
+parse-hwinfo --hwids hwinfo-Vendor-Model-Timestamp.zip
 
 # Write one selected artifact to a file
-./parse-hwinfo.py --markdown -o report.md hwinfo-Vendor-Model-Timestamp.zip
+parse-hwinfo --markdown -o report.md hwinfo-Vendor-Model-Timestamp.zip
 ```
 
 ### Outputs
